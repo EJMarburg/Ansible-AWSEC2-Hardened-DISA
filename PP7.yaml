@@ -1,0 +1,170 @@
+- hosts: localhost
+  connection: ssh
+  gather_facts: yes
+  vars:
+    instance_type: {instance type}
+    security_group: {name}
+    image: {image}
+    keypair: {Key Pair}
+    region: {region}
+    count: 2
+  vars_files:
+    - aws_keys.yaml
+  tasks:
+    - name: Create a security group
+      ec2_group:
+        name: {Name}
+        description: {project Description}
+        region: us-east-1
+        aws_access_key: {Keys}
+        aws_secret_key: {Keys}
+        rules:
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: 0.0.0.0/0
+          - proto: tcp
+            from_port: 80
+            to_port: 80
+            cidr_ip: 0.0.0.0/0
+          - proto: tcp
+            from_port: 443
+            to_port: 443
+            cidr_ip: 0.0.0.0/0
+        rules_egress:
+          - proto: all
+            cidr_ip: 0.0.0.0/0
+
+    - name: Launch the new EC2 Instance
+      ec2:
+        aws_access_key: {Keys}
+        aws_secret_key: {Keys}
+        group: {Group Name}
+        instance_type: {Instance Type}
+        image: {image}
+        wait: true
+        region: {Region}
+        keypair: {Key Pair}
+        count: 2
+      register: ec2
+
+    - name: Add the newly created host so that we can further contact it
+      add_host:
+        name: "{{ item.public_ip }}"
+        groups: webservers
+      with_items: "{{ ec2.instances }}"
+
+    - name: Add tag to Instance(s)
+      ec2_tag:
+        aws_access_key: {Keys}
+        aws_secret_key: {keys}
+        resource: "{{ item.id }}"
+        region: us-east-1
+        state: "present"
+      with_items: "{{ ec2.instances }}"
+      args:
+        tags:
+          Type: webserver
+
+    - name: Wait for SSH to come up
+      wait_for:
+        host: "{{ item.public_ip }}"
+        port: 22
+        state: started
+      with_items: "{{ ec2.instances }}"
+- hosts: webservers  
+  remote_user: ec2-user
+  become: yes
+  gather_facts: yes
+
+  roles:
+    - role: DISA
+
+  tasks:
+  - name: Remove Apache
+    yum: name=httpd state=absent
+
+  - name: Install Apache
+    yum: name=httpd state=latest
+
+  - name: Start Apache on Boot
+    service: name=httpd state=started enabled=yes
+
+  - name: MySQL
+    yum: name={{item}} state=present
+    with_items:
+    - mysql
+    - mysql-server
+    tags:
+    - mysql
+    - mysql-service
+
+  - name: Start MySQL
+    service: name=mysqld state=started enabled=yes
+    tags:
+    - mysql
+    - mysql-service
+
+  - name: Install Python 
+    yum: name={{item}} state=present 
+    with_items:
+        - gcc-c++
+        - python3
+    tags:
+    - mysql
+    - mysql-dependencies
+
+  - name: PHP
+    yum: name={{item}} state=present
+    with_items:
+    - php
+    - php-opcache
+    - php-gd
+    - php-curl
+
+  - name: HTTPD
+    yum: 
+      name: httpd
+
+  - name: Restart HTTPD
+    service: name=httpd state=restarted
+
+  - name: HTTPD Start
+    service: name=httpd state=started
+
+  - name: Start MySQL
+    service: 
+      name: mysqld
+      state: started
+      enabled: yes 
+
+  - name: Create directory
+    command: mkdir /var/www/html/audio
+
+  - name: Removing old html directory from var
+    file:
+      path: /var/www/html/index.html
+      state: absent
+
+  - name: Copy new webpage
+    copy:
+      src: index.html
+      dest: /var/www/html
+
+  - name: Give permissions to html folder
+    command: chmod -R 775 /var/www/html/index.html
+
+
+ - name: Restarting httpd
+    service: name=httpd state=restarted
+ 
+
+
+- hosts: webservers
+  remote_user: ec2-user
+  become: yes
+  gather_facts: yes
+
+  roles: 
+    - role: motd
+
